@@ -223,11 +223,6 @@ bandit -r src/
 ![GitHub issues](https://img.shields.io/github/issues/maree217/enterprise-ai-analytics-platform)
 ![GitHub license](https://img.shields.io/github/license/maree217/enterprise-ai-analytics-platform)
 
-## 🏆 Awards & Recognition
-
-- **"Best Enterprise AI Solution 2024"** - UK AI Awards
-- **"Innovation in MLOps"** - DevOps Excellence Awards  
-- **"Top Open Source AI Project"** - GitHub Collections
 
 ## 📄 License
 
