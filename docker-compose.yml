@@ -1,0 +1,188 @@
+version: '3.8'
+
+services:
+  # Main Application
+  eaap-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=development
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/eaap_db
+      - REDIS_URL=redis://redis:6379/0
+      - NEO4J_URL=neo4j://neo4j:7687
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+    depends_on:
+      - postgres
+      - redis
+      - neo4j
+      - kafka
+    volumes:
+      - ./src:/app/src
+      - ./logs:/app/logs
+    restart: unless-stopped
+
+  # Database Services
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: eaap_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+
+  neo4j:
+    image: neo4j:5.15
+    environment:
+      NEO4J_AUTH: neo4j/password
+      NEO4J_PLUGINS: '["graph-data-science","apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: gds.*,apoc.*
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    restart: unless-stopped
+
+  # Message Queue & Streaming
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+
+  # ML Pipeline Service
+  eaap-ml:
+    build:
+      context: .
+      dockerfile: Dockerfile.ml
+    environment:
+      - ENVIRONMENT=development
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/eaap_db
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ./src:/app/src
+      - ./models:/app/models
+      - ml_artifacts:/app/artifacts
+    restart: unless-stopped
+
+  # Background Worker for Data Processing
+  eaap-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      - ENVIRONMENT=development
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/eaap_db
+      - REDIS_URL=redis://redis:6379/0
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+    depends_on:
+      - postgres
+      - redis
+      - kafka
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+    restart: unless-stopped
+
+  # Monitoring & Observability
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.2.0
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    restart: unless-stopped
+
+  # Development Tools
+  jupyter:
+    build:
+      context: .
+      dockerfile: Dockerfile.jupyter
+    ports:
+      - "8888:8888"
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/eaap_db
+    volumes:
+      - ./notebooks:/app/notebooks
+      - ./src:/app/src
+      - ./data:/app/data
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  neo4j_data:
+  neo4j_logs:
+  zookeeper_data:
+  kafka_data:
+  ml_artifacts:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  default:
+    name: eaap-network
